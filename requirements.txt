@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+psycopg[binary]
+celery[redis]
+redis
+pydantic-settings
+python-dotenv
+supabase
+stripe
+pyjwt
