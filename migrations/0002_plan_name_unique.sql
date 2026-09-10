@@ -1,0 +1,1 @@
+ALTER TABLE plans ADD CONSTRAINT plans_name_unique UNIQUE (name);
