@@ -90,3 +90,51 @@
 - PowerShell's curl.exe doesn't handle inline `-d "{...}"` with escaped
   quotes reliably — standardized on writing JSON to a file and using
   --data-binary "@file.json" for every POST/PATCH from here on
+
+## 2026-09-11 — M2: metering path (idempotency, quota, cost calculation)
+
+### Where AI helped
+- Built CostCalculator as a pure function with unit tests first, before
+  wiring it into any live endpoint — 7 tests covering each token type in
+  isolation, zero-token edge case, truncation-not-rounding behavior made
+  explicit, and a type guard against float creep. Verified against a real
+  request afterward: 7 input + 249 output tokens on nexus-1-mini priced
+  out to exactly 150 micros by hand, matching the endpoint's output
+- Caught that quota checking needed a real plan attached to every org
+  before it could mean anything — M1 never assigned one, since no
+  billing flow existed yet. Fixed at the source (register() now defaults
+  every new org to "free") and backfilled the three existing test orgs
+  rather than leaving the gap for M2's tests to trip over
+- Enforced idempotency at two layers, not one: an explicit pre-check
+  (query by idempotency_key, return the stored result if found) for the
+  common case, plus the database's own UNIQUE constraint on
+  idempotency_key as the real guarantee — so even a race between two
+  identical concurrent requests can produce at most one row, the second
+  commit fails outright rather than silently double-counting
+- Flagged the quota-check design honestly rather than presenting it as
+  final: it queries usage_events directly for the current calendar month,
+  not a pre-computed rollup (usage_rollups doesn't exist until M3). Real
+  and correct for M2's gate, explicitly not the scalable version
+
+### Where AI reordered the spec, and why
+- The kickoff doc's numbered path lists "quota check" (step 6) before
+  "simulate model response" (step 7). Built it the other way — mock
+  response generated first, then quota checked against past usage PLUS
+  this request's actual token count. The literal order would only let
+  quota checking see history, never what the current request itself
+  would consume, which weakens the guarantee for no benefit (mock
+  generation carries no real cost or delay to justify deferring it)
+
+### What I changed and why
+- Idempotency-Key sent as an HTTP header (Stripe's own convention), not
+  a request-body field — deliberate consistency with how M4's real
+  Stripe webhook idempotency will work, so it's one pattern learned once
+- Tested the over-quota gate by seeding one usage_event row directly via
+  SQL (99,900 tokens) rather than sending ~1000 real requests to
+  naturally exhaust a 100k quota — the resulting 429 showed used: 100156,
+  correctly summing the seeded row AND the earlier real test request
+  within the same period, not just the seed alone — stronger proof than
+  a synthetic single-row test would have been
+- pytest needed a pythonpath = . in pytest.ini — bare `pytest` doesn't
+  put the project root (where app/ lives) on the import path by default,
+  unlike uvicorn's module-invocation convention
