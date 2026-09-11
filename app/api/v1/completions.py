@@ -38,8 +38,6 @@ def chat_completions(
     if ctx.org.status != "active":
         raise HTTPException(status_code=403, detail=f"Organization status is '{ctx.org.status}'")
 
-    # Idempotency check FIRST — a retried request must never re-check quota
-    # or re-charge; it returns exactly the original call's billing data.
     existing = session.exec(
         select(UsageEvent).where(UsageEvent.idempotency_key == idempotency_key)
     ).first()
@@ -69,7 +67,18 @@ def chat_completions(
         mock["input_tokens"] + mock["cached_input_tokens"] + mock["output_tokens"] + mock["reasoning_tokens"]
     )
 
-    check_quota(org=ctx.org, plan=ctx.plan, this_request_tokens=this_request_tokens, session=session)
+    # ONE quota check, BEFORE the event exists in the database — its return
+    # value is the true pre-request usage, which the 80% transition check
+    # below depends on being accurate.
+    try:
+        pre_call_count, pre_token_count = check_quota(
+            org=ctx.org, plan=ctx.plan, this_request_tokens=this_request_tokens, session=session
+        )
+    except HTTPException as e:
+        if e.status_code == 429:
+            usage_type = e.detail.get("usage_type", "tokens")
+            send_quota_alert.delay(str(ctx.org.id), "quota_100", usage_type)
+        raise
 
     cost_micros = calculate_cost_micros(
         input_tokens=mock["input_tokens"],
@@ -107,9 +116,6 @@ def chat_completions(
         payload={"model": payload.model, "idempotency_key": idempotency_key, "cost_micros": cost_micros},
     ))
 
-    # Database-level enforcement: idempotency_key's UNIQUE constraint means
-    # even a race between two concurrent identical requests produces exactly
-    # one row — the second commit fails here, not a silent double-count.
     try:
         session.commit()
     except Exception:
@@ -118,18 +124,10 @@ def chat_completions(
 
     session.refresh(usage_event)
 
-    try:
-        pre_call_count, pre_token_count = check_quota(
-            org=ctx.org, plan=ctx.plan, this_request_tokens=this_request_tokens, session=session
-        )
-    except HTTPException as e:
-        if e.status_code == 429:
-            usage_type = e.detail.get("usage_type", "tokens")
-            send_quota_alert.delay(str(ctx.org.id), "quota_100", usage_type)
-        raise
-
-        # 80% warning — fires only on the transition (below 80% before this
-    # request, at/above 80% after), not on every request past that point.
+    # 80% warning — uses pre_call_count/pre_token_count captured BEFORE
+    # this event was inserted, so the transition math reflects reality,
+    # not a self-referential comparison against data that now includes
+    # this same request.
     if ctx.plan.token_quota != -1:
         pre_pct = pre_token_count / ctx.plan.token_quota
         post_pct = (pre_token_count + this_request_tokens) / ctx.plan.token_quota
@@ -140,7 +138,7 @@ def chat_completions(
         post_pct = (pre_call_count + 1) / ctx.plan.api_call_quota
         if pre_pct < 0.8 <= post_pct:
             send_quota_alert.delay(str(ctx.org.id), "quota_80", "api_calls")
-    
+
     return ChatCompletionResponse(
         id=str(usage_event.id),
         model=payload.model,
