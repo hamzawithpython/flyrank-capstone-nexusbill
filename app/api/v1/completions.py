@@ -5,6 +5,8 @@ from app.core.api_auth import get_api_key_context, ApiKeyContext
 from app.core.billing.calculator import calculate_cost_micros
 from app.core.billing.quota import check_quota
 from app.core.billing.metering import generate_mock_completion
+from app.core.jobs.alerts import send_quota_alert
+from fastapi import HTTPException
 from app.db import get_session
 from app.models import AIModel, UsageEvent, AuditLog
 from app.schemas.completion import ChatCompletionRequest, ChatCompletionResponse, Usage
@@ -116,6 +118,29 @@ def chat_completions(
 
     session.refresh(usage_event)
 
+    try:
+        pre_call_count, pre_token_count = check_quota(
+            org=ctx.org, plan=ctx.plan, this_request_tokens=this_request_tokens, session=session
+        )
+    except HTTPException as e:
+        if e.status_code == 429:
+            usage_type = e.detail.get("usage_type", "tokens")
+            send_quota_alert.delay(str(ctx.org.id), "quota_100", usage_type)
+        raise
+
+        # 80% warning — fires only on the transition (below 80% before this
+    # request, at/above 80% after), not on every request past that point.
+    if ctx.plan.token_quota != -1:
+        pre_pct = pre_token_count / ctx.plan.token_quota
+        post_pct = (pre_token_count + this_request_tokens) / ctx.plan.token_quota
+        if pre_pct < 0.8 <= post_pct:
+            send_quota_alert.delay(str(ctx.org.id), "quota_80", "tokens")
+    if ctx.plan.api_call_quota != -1:
+        pre_pct = pre_call_count / ctx.plan.api_call_quota
+        post_pct = (pre_call_count + 1) / ctx.plan.api_call_quota
+        if pre_pct < 0.8 <= post_pct:
+            send_quota_alert.delay(str(ctx.org.id), "quota_80", "api_calls")
+    
     return ChatCompletionResponse(
         id=str(usage_event.id),
         model=payload.model,

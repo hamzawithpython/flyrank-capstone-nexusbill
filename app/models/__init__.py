@@ -8,8 +8,11 @@ from app.models.audit_log import AuditLog
 from app.models.usage_rollup import UsageRollup
 from app.models.subscription import Subscription
 from app.models.stripe_webhook_event import StripeWebhookEvent
+from app.models.usage_alert import UsageAlert
+from app.models.reconciliation_report import ReconciliationReport
 
 __all__ = [
     "Organization", "Plan", "Project", "ApiKey", "AIModel", "UsageEvent",
     "AuditLog", "UsageRollup", "Subscription", "StripeWebhookEvent",
+    "UsageAlert", "ReconciliationReport",
 ]

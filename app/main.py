@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.routes import auth, organizations, projects, keys, usage, billing, webhooks
+from app.api.routes import auth, organizations, projects, keys, usage, billing, webhooks, admin
 from app.api.v1 import completions as v1
 
 app = FastAPI(title="NexusBill")
@@ -10,6 +10,7 @@ app.include_router(keys.router)
 app.include_router(usage.router)
 app.include_router(billing.router)
 app.include_router(webhooks.router)
+app.include_router(admin.router)
 app.include_router(v1.router)
 
 @app.get("/health")

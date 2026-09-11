@@ -9,12 +9,8 @@ celery_app = Celery(
 )
 
 celery_app.conf.beat_schedule = {
-    "rollup-usage-nightly": {
-        "task": "rollup_usage",
-        "schedule": crontab(hour=1, minute=0),
-    },
+    "rollup-usage-nightly": {"task": "rollup_usage", "schedule": crontab(hour=1, minute=0)},
+    "reconcile-stripe-nightly": {"task": "reconcile_stripe", "schedule": crontab(hour=2, minute=0)},
 }
 
-# Imported at the bottom, after celery_app exists, so the task module's
-# `from app.worker import celery_app` resolves without a circular import.
-from app.core.jobs import rollup  # noqa: E402,F401
+from app.core.jobs import rollup, alerts, reconciliation  # noqa: E402,F401
