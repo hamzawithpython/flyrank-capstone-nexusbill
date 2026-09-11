@@ -5,6 +5,7 @@ psycopg[binary]
 celery[redis]
 redis
 pydantic-settings
+pydantic[email]
 python-dotenv
 supabase
 stripe
