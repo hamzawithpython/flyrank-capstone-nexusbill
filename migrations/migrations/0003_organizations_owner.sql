@@ -1,1 +1,0 @@
-ALTER TABLE organizations ADD COLUMN owner_user_id UUID NOT NULL UNIQUE;
