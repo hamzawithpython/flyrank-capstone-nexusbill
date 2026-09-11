@@ -247,3 +247,57 @@
 - winget package ID for the Stripe CLI was wrong on first attempt
   (`stripe.stripe-cli` vs the correct `Stripe.StripeCli`); Scoop worked
   cleanly as the fallback per Stripe's own documented Windows path
+
+## 2026-09-11 — M5: reconciliation, alerts, admin endpoints
+
+### Where AI helped
+- Surfaced before writing any admin code that Stripe never redelivers a
+  dead-lettered event on its own (M4's "always 200" design means Stripe
+  believes every event succeeded) — meaning /admin/failed-webhooks/:id/retry
+  isn't a convenience endpoint, it's the ONLY path a dead-lettered event
+  can be revived through short of a manual Stripe CLI resend. Built it to
+  actually replay the handler against the stored payload, not just reset
+  a status flag and wait for redelivery that would never come
+- Flagged /admin/* as a genuine, undocumented scope gap before building
+  it — no is_platform_admin concept exists anywhere in this schema, so
+  these routes are gated by ordinary auth, not real platform-admin
+  isolation. Documented as a known limitation rather than quietly
+  building something that looks isolated but isn't
+- Reused check_quota's return value (pre-request call/token counts)
+  instead of a second query, so the 80% transition math has an accurate
+  "before" picture without extra DB load on the hot request path
+- When the admin retry endpoint failed against a synthetic fixture event
+  (`stripe trigger`-generated, no real org ever linked to it), recognized
+  this as the CORRECT outcome, not a bug — the retry path reuses the
+  exact same business logic as live processing, so it fails the same way
+  live processing would against nonsense data. A silent "success" against
+  fake data would have been the actual bug
+
+### Where AI was wrong
+- Instructed "change how check_quota is called" ambiguously — it read as
+  "add a new call," not "replace the existing one in place." Result: TWO
+  check_quota calls ended up in chat_completions — the original
+  (unmodified, pre-commit) and the new one (added AFTER session.commit()
+  and session.refresh()). By the second call's time, the just-created
+  usage_event was already in the database, so its "pre-request" totals
+  were actually POST-request totals — the transition check compared
+  already-crossed state against itself and correctly found no transition,
+  because there genuinely wasn't one left to find by that point. No crash,
+  no error — just a silently-passing quota check with a semantically
+  meaningless 80%-check bolted on after it. Fixed by replacing the whole
+  function, not patching a second time, given how the first patch's
+  ambiguity had already gone wrong once
+
+### What actually happened vs what looked like a bug
+- First alert test: seeded usage assuming the org was at zero for the
+  month. It wasn't — leftover usage_events from M2 and M4 testing were
+  still in the current calendar-month window. Seed math needs to account
+  for a queried REAL baseline, not an assumed one, every time — the same
+  lesson from M2's quota test, learned again the hard way
+- Second alert test (after the duplication fix): still no alert fired.
+  Correct behavior, not a new bug — the PREVIOUS request (run under the
+  broken duplicated code) had already pushed the org's real usage past
+  80% before the fix was live. By the time the fixed code ran, there was
+  no transition left to detect; the crossing had already happened
+  silently. Required a full reset-and-recross to actually exercise the
+  fixed logic against a genuine below-to-above transition
