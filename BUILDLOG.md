@@ -32,3 +32,61 @@
   undeliverable, then hit its own send-rate limit before "Confirm email"
   was disabled — switched to a real domain via Gmail plus-addressing and
   turned off email confirmation for this dev-only auth project
+
+## 2026-09-11 — M1: Organization, Project, API Key management
+
+### Where AI helped
+- Extracted `get_caller_org` / `get_owned_project` as shared FastAPI
+  dependencies early, once the same org-scoping lookup was needed a second
+  time — meant tenant isolation is enforced structurally (no ID parameter
+  to manipulate, no per-route check to forget) rather than reimplemented,
+  and easy to get subtly wrong, in every route
+- Caught that a hard-delete on projects would either FK-violate or silently
+  orphan billing history — archived_at was already in the schema for this
+  exact reason, so "soft delete" wasn't a new decision, just correctly
+  implementing what M0's schema had already committed to
+- Designed key storage as hash-only from the start (SHA-256, not bcrypt —
+  the key's 256 bits of randomness makes slow hashing pointless, unlike a
+  human-chosen password), with `response_model` structurally preventing the
+  full key from ever being returned after creation, not just relying on
+  route code to remember not to
+
+### Where AI was wrong
+- Gave SQLModel `Organization`/`Plan` classes without registering `Plan` in
+  a shared `models/__init__.py` import path — SQLAlchemy's ORM needs every
+  FK-referenced table mapped to a loaded Python class to resolve insert
+  order, not just present in the actual database. First register() attempt
+  failed with NoReferencedTableError as a result
+- `app/db.py`'s `create_engine()` needed an explicit `+psycopg` driver
+  suffix — SQLAlchemy defaults a bare postgresql:// URL to psycopg2, which
+  isn't installed (project deliberately uses psycopg3). Silent, confusing
+  failure mode: the container process stayed "Up" while unable to serve
+  any request, because only the reload-supervised worker subprocess
+  crashed on import — made a driver mismatch look like a network hang
+- Wrote the original register() with no rollback path for a Supabase-
+  signup-succeeds-then-local-DB-fails scenario, leaving an orphaned
+  Supabase user with no org. Fixed by adding a compensating delete call —
+  then that same compensating call crashed too (SUPABASE_SERVICE_ROLE_KEY
+  unset from a not-yet-recreated container), which silently masked the
+  *original* error. Second fix: rollback failures must never hide the
+  primary failure — surface both, always
+- Gave a `migrations/0003_organizations_owner.sql` file's contents in chat
+  but it was never actually saved to disk — three separate bugs got
+  chased and fixed downstream before the real cause (a missing column)
+  surfaced. Worth double-checking file creation, not just giving content
+
+### What I changed and why
+- Added `pydantic[email]` (EmailStr needs email-validator, not bundled by
+  default) and swallowed one more rebuild-vs-restart distinction: new
+  dependencies need `--build`, code-only changes don't
+- Built `/auth/login` as a thin proxy to Supabase's own token endpoint
+  after losing track of test tokens twice — meant every future milestone's
+  testing goes through the app's own API instead of raw Supabase calls
+  with a manually-copied anon key
+- Committed two response*.json files containing live (if short-lived, low-
+  stakes) tokens before widening .gitignore to response*.json — caught
+  both times via `git rm --cached`, not a rewritten history, since the
+  tokens were test-scoped and already expired by the time it mattered
+- PowerShell's curl.exe doesn't handle inline `-d "{...}"` with escaped
+  quotes reliably — standardized on writing JSON to a file and using
+  --data-binary "@file.json" for every POST/PATCH from here on
