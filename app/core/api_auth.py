@@ -4,16 +4,17 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlmodel import Session, select
 from app.db import get_session
-from app.models import ApiKey, Project, Organization
+from app.models import ApiKey, Project, Organization, Plan
 
 api_key_security = HTTPBearer()
 
 
 class ApiKeyContext:
-    def __init__(self, api_key: ApiKey, project: Project, org: Organization):
+    def __init__(self, api_key: ApiKey, project: Project, org: Organization, plan: Plan):
         self.api_key = api_key
         self.project = project
         self.org = org
+        self.plan = plan
 
 
 def get_api_key_context(
@@ -29,9 +30,12 @@ def get_api_key_context(
 
     project = session.get(Project, api_key.project_id)
     org = session.get(Organization, project.org_id)
+    plan = session.get(Plan, org.plan_id)
+    if plan is None:
+        raise HTTPException(status_code=500, detail="Organization has no plan assigned")
 
     api_key.last_used_at = datetime.utcnow()
     session.add(api_key)
     session.commit()
 
-    return ApiKeyContext(api_key=api_key, project=project, org=org)
+    return ApiKeyContext(api_key=api_key, project=project, org=org, plan=plan)
