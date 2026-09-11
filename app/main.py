@@ -1,9 +1,10 @@
 from fastapi import FastAPI
-from app.api.routes import auth, organizations
+from app.api.routes import auth, organizations, projects
 
 app = FastAPI(title="NexusBill")
 app.include_router(auth.router)
 app.include_router(organizations.router)
+app.include_router(projects.router)
 
 @app.get("/health")
 def health():
