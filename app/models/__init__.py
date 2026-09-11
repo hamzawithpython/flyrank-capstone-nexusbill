@@ -6,5 +6,10 @@ from app.models.ai_model import AIModel
 from app.models.usage_event import UsageEvent
 from app.models.audit_log import AuditLog
 from app.models.usage_rollup import UsageRollup
+from app.models.subscription import Subscription
+from app.models.stripe_webhook_event import StripeWebhookEvent
 
-__all__ = ["Organization", "Plan", "Project", "ApiKey", "AIModel", "UsageEvent", "AuditLog", "UsageRollup"]
+__all__ = [
+    "Organization", "Plan", "Project", "ApiKey", "AIModel", "UsageEvent",
+    "AuditLog", "UsageRollup", "Subscription", "StripeWebhookEvent",
+]
