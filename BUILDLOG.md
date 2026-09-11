@@ -183,3 +183,67 @@
   separate times across M1—M3 — worth treating /auth/login as the
   default first step of any test session from here on, not an
   occasional fallback
+
+## 2026-09-11 — M4: Stripe checkout, hardened webhook handler
+
+### Where AI helped
+- Designed the metadata linkage (org_id + target_plan attached to the
+  Checkout Session, echoed back untouched on checkout.session.completed)
+  as the mechanism connecting Stripe's object graph to this schema's —
+  Stripe has no concept of "organizations," so without this the webhook
+  would have no way to know which org a completed checkout belonged to
+- Built the webhook handler to always return 200 even on processing
+  failure, deliberately owning the entire retry lifecycle in one place
+  (our own attempts counter) instead of splitting it between Stripe's
+  built-in retry-on-non-2xx and ours — returning 500 would have caused
+  both systems to retry independently and double-count
+- Proved the dead-letter path deterministically rather than trusting the
+  code: injected a real failure into one handler, retried the SAME event
+  three times via `stripe events resend`, confirmed attempts climbed
+  1→2→3 and status flipped to failed only at the threshold — not three
+  different events each failing once, which would have proven nothing
+  about the actual per-event retry ceiling
+
+### Where AI was wrong — two distinct, real bugs
+- Every event handler called `.get()` on `event_data` assuming it was a
+  plain dict. Stripe's SDK returns its own resource objects instead —
+  attribute-style access works, `.get()` doesn't, and the error was
+  explicit about it. Every OTHER event type during the first real
+  checkout test returned 200 despite this bug being present, because
+  they all hit the "no handler registered" branch and never touched the
+  broken code — a clean HTTP response proved nothing about correctness
+  here, only that the route didn't crash
+- Deeper bug, found only while debugging the first one: the dedup check
+  treated ANY existing stripe_webhook_events row as "already handled,"
+  with no distinction between status=processed (genuinely done) and
+  status=pending (received once, crashed before finishing). A resent
+  event matched the existing pending row and returned duplicate:true
+  immediately — the handler, and the .to_dict() fix inside it, never
+  ran a second time. This would have silently broken Stripe's own
+  automatic retries too, not just the manual resend: any transient
+  failure would have permanently stuck an event at pending with zero
+  chance of self-healing on subsequent delivery attempts
+
+### What actually happened vs what looked like a bug
+- A resend appeared to fail with the same unchanged error twice in a
+  row. First suspected cause (wrong): a race between `docker compose
+  up --force-recreate` and Stripe's delivery attempt (EOF error,
+  container briefly down) — plausible-looking, but ruled out once a
+  clean resend with nothing else running produced the identical
+  unchanged result. The real cause was the dedup bug above. Worth
+  noting: an infrastructure explanation that fits the symptoms isn't
+  automatically the right one — the unchanged attempts counter was the
+  actual tell, not the terminal noise around it
+- The `stripe listen` tunnel died twice mid-task (once silently, once
+  visibly with EOF) — it does not survive indefinitely and needs to be
+  treated as a dedicated, actively-monitored terminal, not "start once
+  and forget," across a long testing session
+
+### What I changed and why
+- `stripe trigger <event>` generates synthetic events with fixture data,
+  NOT resends of a real event — using it to "retry" a specific stuck
+  event was the wrong tool; `stripe events resend <id>` is what actually
+  redelivers the same event with its original real metadata intact
+- winget package ID for the Stripe CLI was wrong on first attempt
+  (`stripe.stripe-cli` vs the correct `Stripe.StripeCli`); Scoop worked
+  cleanly as the fallback per Stripe's own documented Windows path
