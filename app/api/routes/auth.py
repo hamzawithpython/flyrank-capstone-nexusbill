@@ -38,18 +38,21 @@ def register(payload: RegisterRequest, session: Session = Depends(get_session)):
     user_id = data["user"]["id"]
 
     try:
+        free_plan = session.exec(select(Plan).where(Plan.name == "free")).first()
+        if free_plan is None:
+            raise RuntimeError("Free plan not found — was scripts/seed.py run?")
+
         org = Organization(
             owner_user_id=user_id,
             name=payload.org_name,
             email=payload.email,
+            plan_id=free_plan.id,
         )
         session.add(org)
         session.commit()
         session.refresh(org)
     except Exception as e:
         session.rollback()
-        # The compensating action can fail too — never let that failure
-        # hide the original error. Surface both, always.
         try:
             _delete_supabase_user(user_id)
             cleanup_note = "Supabase user was rolled back successfully."
