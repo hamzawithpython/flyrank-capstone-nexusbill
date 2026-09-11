@@ -113,10 +113,12 @@ webhook events — see `.env.example` for exactly which variables.
 
 Three plans (`free`, `pro`, `enterprise`) and three models (`nexus-1`,
 `nexus-1-mini`, `nexus-2`) with real per-token pricing are seeded
-automatically. No account exists by default — register your own via
-`POST /auth/register` (email, password, organization name) to get a
-working org on the Free plan immediately, ready to create a project, an
-API key, and start calling `/v1/chat/completions`.
+automatically, along with a ready-to-use **Demo Org**, **Demo Project**,
+and one active API key — printed once to the console during
+`scripts/seed.py`. Copy it from your terminal output and call
+`/v1/chat/completions` immediately, no registration required. (Want your
+own account instead? `POST /auth/register` works the same way it always
+has, and gets you a fresh org on the Free plan.)
 
 ---
 
