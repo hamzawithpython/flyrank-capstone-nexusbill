@@ -1,24 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 from datetime import datetime
-from uuid import UUID
-from app.core.deps import get_caller_org
+from app.core.deps import get_caller_org, get_owned_project
 from app.db import get_session
 from app.models import Organization, Project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectRead
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-
-
-def _get_owned_project(project_id: UUID, org_id: UUID, session: Session) -> Project:
-    project = session.get(Project, project_id)
-    if project is None or project.org_id != org_id:
-        # Same 404 whether the project doesn't exist at all, or exists but
-        # belongs to a different org. Returning 403 for the second case would
-        # leak that the ID is valid — a small but real cross-tenant information
-        # leak. A 404 tells an attacker nothing either way.
-        raise HTTPException(status_code=404, detail="Project not found")
-    return project
 
 
 @router.post("", response_model=ProjectRead)
@@ -47,22 +35,16 @@ def list_projects(
 
 
 @router.get("/{project_id}", response_model=ProjectRead)
-def get_project(
-    project_id: UUID,
-    org: Organization = Depends(get_caller_org),
-    session: Session = Depends(get_session),
-):
-    return _get_owned_project(project_id, org.id, session)
+def get_project(project: Project = Depends(get_owned_project)):
+    return project
 
 
 @router.patch("/{project_id}", response_model=ProjectRead)
 def update_project(
-    project_id: UUID,
     payload: ProjectUpdate,
-    org: Organization = Depends(get_caller_org),
+    project: Project = Depends(get_owned_project),
     session: Session = Depends(get_session),
 ):
-    project = _get_owned_project(project_id, org.id, session)
     if payload.name is not None:
         project.name = payload.name
     if payload.description is not None:
@@ -75,11 +57,9 @@ def update_project(
 
 @router.delete("/{project_id}", response_model=ProjectRead)
 def archive_project(
-    project_id: UUID,
-    org: Organization = Depends(get_caller_org),
+    project: Project = Depends(get_owned_project),
     session: Session = Depends(get_session),
 ):
-    project = _get_owned_project(project_id, org.id, session)
     project.archived_at = datetime.utcnow()
     session.add(project)
     session.commit()

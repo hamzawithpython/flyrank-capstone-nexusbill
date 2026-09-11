@@ -9,3 +9,10 @@ class RegisterRequest(BaseModel):
 class RegisterResponse(BaseModel):
     access_token: str
     org_id: UUID
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class LoginResponse(BaseModel):
+    access_token: str

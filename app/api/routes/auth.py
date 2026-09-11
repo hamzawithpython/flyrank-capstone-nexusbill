@@ -5,7 +5,7 @@ from sqlmodel import Session
 from app.core.security import get_current_user
 from app.db import get_session
 from app.models import Organization
-from app.schemas.auth import RegisterRequest, RegisterResponse
+from app.schemas.auth import RegisterRequest, RegisterResponse, LoginRequest, LoginResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -66,3 +66,15 @@ def register(payload: RegisterRequest, session: Session = Depends(get_session)):
 @router.get("/me")
 def get_me(user: dict = Depends(get_current_user)):
     return {"user_id": user["sub"], "email": user.get("email")}
+
+@router.post("/login", response_model=LoginResponse)
+def login(payload: LoginRequest):
+    resp = httpx.post(
+        f"{SUPABASE_URL}/auth/v1/token?grant_type=password",
+        headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+        json={"email": payload.email, "password": payload.password},
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    return LoginResponse(access_token=resp.json()["access_token"])
