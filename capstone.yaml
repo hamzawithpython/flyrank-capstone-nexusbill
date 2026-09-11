@@ -1,0 +1,61 @@
+name: nexusbill
+description: Usage-based billing infrastructure for an AI API product
+
+run:
+  - docker compose up -d --build
+
+seed:
+  - docker compose exec api python scripts/run_migrations.py
+  - docker compose exec api python scripts/seed.py
+
+base_url: http://localhost:8000
+
+endpoints:
+  - method: GET
+    path: /health
+    auth: none
+    description: Liveness check
+  - method: POST
+    path: /auth/register
+    auth: none
+    description: Create a user and organization (defaults to Free plan)
+  - method: POST
+    path: /auth/login
+    auth: none
+    description: Get a JWT for an existing user
+  - method: GET
+    path: /org
+    auth: jwt
+    description: Get the caller's own organization
+  - method: POST
+    path: /projects
+    auth: jwt
+    description: Create a project
+  - method: POST
+    path: /projects/{project_id}/keys
+    auth: jwt
+    description: Create an API key (shown once)
+  - method: POST
+    path: /v1/chat/completions
+    auth: api_key
+    description: The billable, metered endpoint — requires Idempotency-Key header
+  - method: GET
+    path: /org/usage
+    auth: jwt
+    description: Current period usage from the rollup cache
+  - method: POST
+    path: /billing/estimate
+    auth: jwt
+    description: Pure-math cost projection, no live data required
+  - method: POST
+    path: /billing/checkout
+    auth: jwt
+    description: Create a Stripe Checkout session (test mode)
+  - method: POST
+    path: /webhooks/stripe
+    auth: stripe_signature
+    description: Stripe webhook receiver
+  - method: GET
+    path: /admin/reconciliation-reports
+    auth: jwt
+    description: Recent Stripe-vs-DB reconciliation runs
