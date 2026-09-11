@@ -46,6 +46,9 @@ def handle_checkout_completed(event_data: dict, session: Session) -> None:
 
 
 def handle_subscription_updated(event_data: dict, session: Session) -> None:
+
+    
+    
     stripe_sub_id = event_data.get("id")
     sub = session.exec(
         select(Subscription).where(Subscription.stripe_subscription_id == stripe_sub_id)
